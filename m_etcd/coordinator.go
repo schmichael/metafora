@@ -13,31 +13,9 @@ import (
 	"github.com/lytics/metafora"
 )
 
-const (
-	// etcd/Response.Action values
-	actionCreated = "create"
-	actionSet     = "set"
-	actionExpire  = "expire"
-	actionDelete  = "delete"
-	actionCAD     = "compareAndDelete"
-)
-
 var (
 	ClaimTTL           uint64 = 120 // seconds
 	DefaultNodePathTTL uint64 = 20  // seconds
-
-	// etcd actions signifying a claim key was released
-	releaseActions = map[string]bool{
-		actionExpire: true,
-		actionDelete: true,
-		actionCAD:    true,
-	}
-
-	// etcd actions signifying a new key
-	newActions = map[string]bool{
-		actionCreated: true,
-		actionSet:     true,
-	}
 
 	restartWatchError = errors.New("index too old, need to restart watch")
 )
@@ -217,7 +195,7 @@ func (ec *EtcdCoordinator) refreshBy(deadline time.Time) (err error) {
 
 // Watch streams tasks from etcd watches or GETs until Close is called or etcd
 // is unreachable (in which case an error is returned).
-func (ec *EtcdCoordinator) Watch(out chan<- string) error {
+func (ec *EtcdCoordinator) Watch(out chan<- metafora.Task) error {
 	const sorted = true
 	const recursive = true
 
@@ -247,7 +225,11 @@ startWatch:
 				// Record the max modified index to keep Watch from picking up redundant events
 				index = node.ModifiedIndex
 			}
-			if task, ok := ec.parseTask(&etcd.Response{Action: "create", Node: node}); ok {
+			// Skip non-directories to prevent parsing the same task more than once
+			if !node.Dir {
+				continue
+			}
+			if task, ok := parseTask(ec.Client, &etcd.Response{Action: "create", Node: node}, ec.taskPath); ok {
 				select {
 				case out <- task:
 				case <-ec.stop:
@@ -269,8 +251,8 @@ startWatch:
 				return err
 			}
 
-			// Found a claimable task! Return it if it's not Ignored.
-			if task, ok := ec.parseTask(resp); ok {
+			// Found a claimable task!
+			if task, ok := parseTask(ec.Client, resp, ec.taskPath); ok {
 				select {
 				case out <- task:
 				case <-ec.stop:
@@ -282,39 +264,6 @@ startWatch:
 			index = resp.Node.ModifiedIndex
 		}
 	}
-}
-
-func (ec *EtcdCoordinator) parseTask(resp *etcd.Response) (task string, ok bool) {
-	// Sanity check / test path invariant
-	if !strings.HasPrefix(resp.Node.Key, ec.taskPath) {
-		metafora.Errorf("Received task from outside task path: %s", resp.Node.Key)
-		return "", false
-	}
-
-	key := strings.Trim(resp.Node.Key, "/") // strip leading and trailing /s
-	parts := strings.Split(key, "/")
-
-	// Pickup new tasks
-	if newActions[resp.Action] && len(parts) == 3 && resp.Node.Dir {
-		// Make sure it's not already claimed before returning it
-		for _, n := range resp.Node.Nodes {
-			if strings.HasSuffix(n.Key, OwnerMarker) {
-				metafora.Debugf("Ignoring task as it's already claimed: %s", parts[2])
-				return "", false
-			}
-		}
-		metafora.Debugf("Received new task: %s", parts[2])
-		return parts[2], true
-	}
-
-	// If a claim key is removed, try to claim the task
-	if releaseActions[resp.Action] && len(parts) == 4 && parts[3] == OwnerMarker {
-		metafora.Debugf("Received released task: %s", parts[2])
-		return parts[2], true
-	}
-
-	// Ignore any other key events (_metafora keys, task deletion, etc.)
-	return "", false
 }
 
 // Claim is called by the Consumer when a Balancer has determined that a task

@@ -6,6 +6,19 @@ import "errors"
 //is that existing metafora tests would have to be moved to the metafora_test
 //package which means no manipulating unexported globals like balance jitter.
 
+var (
+	_ Coordinator = (*TestCoord)(nil)
+	_ Task        = (*TestTask)(nil)
+)
+
+type TestTask struct {
+	id    string
+	props map[string]string
+}
+
+func (t *TestTask) ID() string               { return t.id }
+func (t *TestTask) Props() map[string]string { return t.props }
+
 type TestCoord struct {
 	Tasks    chan string // will be returned in order, "" indicates return an error
 	Commands chan Command
@@ -32,7 +45,7 @@ func (c *TestCoord) Done(task string)            { c.Dones <- task }
 
 // Watch sends tasks from the Tasks channel unless an empty string is sent.
 // Then an error is returned.
-func (c *TestCoord) Watch(out chan<- string) error {
+func (c *TestCoord) Watch(out chan<- Task) error {
 	task := ""
 	for {
 		select {
@@ -45,7 +58,7 @@ func (c *TestCoord) Watch(out chan<- string) error {
 			return nil
 		}
 		select {
-		case out <- task:
+		case out <- &TestTask{id: task}:
 			Debugf("TestCoord sent: %s", task)
 		case <-c.closed:
 			return nil

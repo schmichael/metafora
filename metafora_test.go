@@ -115,9 +115,9 @@ type testBalancer struct {
 }
 
 func (b *testBalancer) Init(c BalancerContext) { b.c = c }
-func (b *testBalancer) CanClaim(taskID string) (time.Time, bool) {
-	b.t.Logf("CanClaim(%s) -> %t", taskID, taskID == "ok-task")
-	return time.Now().Add(100 * time.Hour), taskID == "ok-task"
+func (b *testBalancer) CanClaim(task Task) (time.Time, bool) {
+	b.t.Logf("CanClaim(%s) -> %t", task.ID(), task.ID() == "ok-task")
+	return time.Now().Add(100 * time.Hour), task.ID() == "ok-task"
 }
 func (b *testBalancer) Balance() []string {
 	if b.secondRun {

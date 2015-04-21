@@ -2,6 +2,8 @@ package metafora
 
 import "testing"
 
+var _ Balancer = &ResourceBalancer{}
+
 type fakeReporter struct {
 	used  uint64
 	total uint64
@@ -48,9 +50,7 @@ func TestResourceBalancer(t *testing.T) {
 		t.Errorf("Expected 1 released task but found: %v", release)
 	}
 
-	//FIXME When #93 is fixed this test should break as CanClaim should actually
-	//      return false
-	if !bal.CanClaim("claimmepls") {
-		t.Errorf("Until #93 is fixed, CanClaim should always return true")
+	if _, ok := bal.CanClaim(nil); ok {
+		t.Errorf("Balancer should not have claimed task but did!")
 	}
 }

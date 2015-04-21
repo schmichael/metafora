@@ -44,7 +44,7 @@ func TestCoordinatorTC1(t *testing.T) {
 	}
 	defer coordinator1.Close()
 
-	tasks := make(chan string)
+	tasks := make(chan metafora.Task)
 	task001 := "test-task"
 	taskPath := path.Join(namespace, TasksPath, task001)
 	errc := make(chan error)
@@ -57,9 +57,9 @@ func TestCoordinatorTC1(t *testing.T) {
 	client.CreateDir(taskPath, 5)
 
 	select {
-	case taskId := <-tasks:
-		if taskId != task001 {
-			t.Fatalf("coordinator1.Watch() test failed: We received the incorrect taskId.  Got [%s] Expected[%s]", taskId, task001)
+	case task := <-tasks:
+		if task.ID() != task001 {
+			t.Fatalf("coordinator1.Watch() test failed: We received the incorrect taskId.  Got [%s] Expected[%s]", task.ID(), task001)
 		}
 	case <-time.After(time.Second * 5):
 		t.Fatalf("coordinator1.Watch() test failed: The testcase timed out after 5 seconds.")
@@ -84,7 +84,7 @@ func TestCoordinatorTC2(t *testing.T) {
 
 	mclient := NewClient(namespace, client)
 
-	tasks := make(chan string)
+	tasks := make(chan metafora.Task)
 	errc := make(chan error)
 	go func() {
 		//Watch blocks, so we need to test it in its own go routine.
@@ -92,12 +92,12 @@ func TestCoordinatorTC2(t *testing.T) {
 	}()
 
 	for _, task := range testTasks {
-		err := mclient.SubmitTask(task)
+		err := mclient.SubmitTask(task, nil)
 		if err != nil {
 			t.Fatalf("Error submitting a task to metafora via the client.  Error:\n%v", err)
 		}
 		recvd := <-tasks
-		if recvd != task {
+		if recvd.ID() != task {
 			t.Fatalf("%s != %s - received an unexpected task", recvd, task)
 		}
 		if ok := coordinator1.Claim(task); !ok {
@@ -132,8 +132,8 @@ func TestCoordinatorTC3(t *testing.T) {
 
 	// Start the watchers
 	errc := make(chan error, 2)
-	c1tasks := make(chan string)
-	c2tasks := make(chan string)
+	c1tasks := make(chan metafora.Task)
+	c2tasks := make(chan metafora.Task)
 	go func() {
 		errc <- coordinator1.Watch(c1tasks)
 	}()
@@ -143,7 +143,7 @@ func TestCoordinatorTC3(t *testing.T) {
 
 	// Submit the tasks
 	for _, tid := range testTasks {
-		err := mclient.SubmitTask(tid)
+		err := mclient.SubmitTask(tid, nil)
 		if err != nil {
 			t.Fatalf("Error submitting task=%q to metafora via the client. Error:\n%v", tid, err)
 		}
@@ -153,18 +153,18 @@ func TestCoordinatorTC3(t *testing.T) {
 	//    submitted to etcd which, while /possible/ to guarantee, isn't a gurantee
 	//    we're interested in making. Remove this section if it starts causing problems.
 	//    We only want to guarantee that exactly one coordinator can claim a task.
-	c1tid := <-c1tasks
-	c2tid := <-c2tasks
-	if c1tid != c2tid {
-		t.Fatalf("Watchers didn't receive the same task %s != %s. Might be fine; see code.", c1tid, c2tid)
+	c1t := <-c1tasks
+	c2t := <-c2tasks
+	if c1t.ID() != c2t.ID() {
+		t.Fatalf("Watchers didn't receive the same task %s != %s. Might be fine; see code.", c1t.ID(), c2t.ID())
 	}
 
 	// Make sure c1 can claim and c2 cannot
-	if ok := coordinator1.Claim(c1tid); !ok {
-		t.Fatalf("coordinator1.Claim() unable to claim the task=%q", c1tid)
+	if ok := coordinator1.Claim(c1t.ID()); !ok {
+		t.Fatalf("coordinator1.Claim() unable to claim the task=%q", c1t)
 	}
-	if ok := coordinator2.Claim(c1tid); ok {
-		t.Fatalf("coordinator2.Claim() succeeded for task=%q when it shouldn't have!", c2tid)
+	if ok := coordinator2.Claim(c1t.ID()); ok {
+		t.Fatalf("coordinator2.Claim() succeeded for task=%q when it shouldn't have!", c2t)
 	}
 
 	// Make sure coordinators close down properly and quickly
@@ -190,7 +190,7 @@ func TestCoordinatorTC4(t *testing.T) {
 
 	mclient := NewClient(namespace, client)
 
-	err := mclient.SubmitTask(task)
+	err := mclient.SubmitTask(task, nil)
 	if err != nil {
 		t.Fatalf("Error submitting a task to metafora via the client. Error:\n%v", err)
 	}
@@ -202,14 +202,14 @@ func TestCoordinatorTC4(t *testing.T) {
 	defer coordinator1.Close()
 
 	errc := make(chan error)
-	c1tasks := make(chan string)
+	c1tasks := make(chan metafora.Task)
 	go func() {
 		errc <- coordinator1.Watch(c1tasks)
 	}()
 
-	tid := <-c1tasks
+	recvd := <-c1tasks
 
-	if ok := coordinator1.Claim(tid); !ok {
+	if ok := coordinator1.Claim(recvd.ID()); !ok {
 		t.Fatal("coordinator1.Claim() unable to claim the task")
 	}
 
@@ -220,7 +220,7 @@ func TestCoordinatorTC4(t *testing.T) {
 	}
 	defer coordinator2.Close()
 
-	c2tasks := make(chan string)
+	c2tasks := make(chan metafora.Task)
 	go func() {
 		errc <- coordinator2.Watch(c2tasks)
 	}()
@@ -233,10 +233,10 @@ func TestCoordinatorTC4(t *testing.T) {
 	}
 
 	// Now release the task from coordinator1 and claim it with coordinator2
-	coordinator1.Release(tid)
-	tid = <-c2tasks
-	if ok := coordinator2.Claim(tid); !ok {
-		t.Fatalf("coordinator2.Claim() should have succeded on released task=%q", tid)
+	coordinator1.Release(recvd.ID())
+	recvd = <-c2tasks
+	if ok := coordinator2.Claim(recvd.ID()); !ok {
+		t.Fatalf("coordinator2.Claim() should have succeded on released task=%q", recvd.ID())
 	}
 
 	coordinator1.Close()

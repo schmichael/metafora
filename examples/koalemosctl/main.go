@@ -46,7 +46,7 @@ func main() {
 
 	// Finally create the task for metafora
 	mc := m_etcd.NewClient(*namespace, ec)
-	if err := mc.SubmitTask(taskID); err != nil {
+	if err := mc.SubmitTask(taskID, nil); err != nil {
 		fmt.Println("Error submitting task:", taskID)
 		os.Exit(5)
 	}

@@ -12,15 +12,15 @@ import (
 // introspection endpoints.
 type Consumer interface {
 	Frozen() bool
-	Tasks() []metafora.Task
+	Tasks() []metafora.RunningTask
 }
 
 // InfoResponse is the JSON response marshalled by the MakeInfoHandler.
 type InfoResponse struct {
-	Frozen  bool            `json:"frozen"`
-	Node    string          `json:"node"`
-	Started time.Time       `json:"started"`
-	Tasks   []metafora.Task `json:"tasks"`
+	Frozen  bool                   `json:"frozen"`
+	Node    string                 `json:"node"`
+	Started time.Time              `json:"started"`
+	Tasks   []metafora.RunningTask `json:"tasks"`
 }
 
 // MakeInfoHandler returns an HTTP handler which can be added to an exposed

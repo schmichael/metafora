@@ -20,7 +20,7 @@ type Coordinator interface {
 
 	// Watch the broker for tasks. Watch blocks until Close is called or it
 	// encounters an error. Tasks are sent to consumer via the tasks chan.
-	Watch(tasks chan<- string) (err error)
+	Watch(tasks chan<- Task) (err error)
 
 	// Claim is called by the Consumer when a Balancer has determined that a task
 	// ID can be claimed. Claim returns false if another consumer has already

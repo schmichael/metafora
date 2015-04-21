@@ -1,8 +1,9 @@
 package m_etcd
 
 import (
-	"fmt"
+	"encoding/json"
 	"path"
+	"time"
 
 	"github.com/coreos/go-etcd/etcd"
 	"github.com/lytics/metafora"
@@ -10,6 +11,9 @@ import (
 
 // NewClient creates a new client using an etcd backend.
 func NewClient(namespace string, client *etcd.Client) metafora.Client {
+	if namespace[0] != '/' {
+		namespace = "/" + namespace
+	}
 
 	return &mclient{
 		etcd:      client,
@@ -23,34 +27,34 @@ type mclient struct {
 	namespace string
 }
 
-// ndsPath is the base path of nodes, represented as a directory in etcd.
-func (mc *mclient) ndsPath() string {
-	return fmt.Sprintf("/%s/%s", mc.namespace, NodesPath)
-}
-
-// tskPath is the path to a particular taskId, represented as a file in etcd.
-func (mc *mclient) tskPath(taskId string) string {
-	return fmt.Sprintf("/%s/%s/%s", mc.namespace, TasksPath, taskId)
+// taskPath is the etcd path to a task's props file.
+func (mc *mclient) taskPath(tid string) string {
+	return path.Join(mc.namespace, TasksPath, tid, propsKey)
 }
 
 // cmdPath is the path to a particular nodeId, represented as a directory in etcd.
 func (mc *mclient) cmdPath(node string) string {
-	return path.Join("/", mc.namespace, NodesPath, node, "commands")
+	return path.Join(mc.namespace, NodesPath, node, "commands")
 }
 
-// SubmitTask creates a new taskId, represented as a directory in etcd.
-func (mc *mclient) SubmitTask(taskId string) error {
-	fullpath := mc.tskPath(taskId)
-	_, err := mc.etcd.CreateDir(fullpath, ForeverTTL)
-	metafora.Debugf("task submitted [%s]", fullpath)
-	return err
-}
+// SubmitTask submits a task to an etcd coordinator. See the etcd documentation
+// for the key layout.
+func (mc *mclient) SubmitTask(id string, props map[string]string) error {
+	if props == nil {
+		props = map[string]string{}
+	}
+	// Add internal metadata properties and marshal props
+	props["_submitted"] = time.Now().Format(time.RFC3339Nano)
 
-// Delete a task
-func (mc *mclient) DeleteTask(taskId string) error {
-	fullpath := mc.tskPath(taskId)
-	_, err := mc.etcd.DeleteDir(fullpath)
-	metafora.Debugf("task deleted [%s]", fullpath)
+	buf, err := json.Marshal(props)
+	if err != nil {
+		// I don't think this is even possible when marshaling map[string]strings
+		return err
+	}
+
+	fullpath := mc.taskPath(id)
+	_, err = mc.etcd.Create(fullpath, string(buf), ForeverTTL)
+	metafora.Debugf("task=%q submitted", id)
 	return err
 }
 
@@ -71,19 +75,4 @@ func (mc *mclient) SubmitCommand(node string, command metafora.Command) error {
 	}
 	metafora.Debugf("Submitted command: %s to node: %s", command, node)
 	return nil
-}
-
-// Nodes fetchs the currently registered nodes. A non-nil error means that some
-// error occured trying to get the node list. The node list may be nil if no
-// nodes are registered.
-func (mc *mclient) Nodes() ([]string, error) {
-	if res, err := mc.etcd.Get(mc.ndsPath(), false, false); err != nil && res.Node != nil && res.Node.Nodes != nil {
-		nodes := make([]string, len(res.Node.Nodes))
-		for i, n := range res.Node.Nodes {
-			nodes[i] = n.Value
-		}
-		return nodes, nil
-	}
-
-	return nil, nil
 }

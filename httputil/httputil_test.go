@@ -15,7 +15,7 @@ type tc struct {
 }
 
 func (*tc) Init(metafora.CoordinatorContext) error { return nil }
-func (c *tc) Watch(chan<- string) error {
+func (c *tc) Watch(chan<- metafora.Task) error {
 	<-c.stop
 	return nil
 }

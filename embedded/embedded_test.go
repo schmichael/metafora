@@ -9,7 +9,7 @@ import (
 )
 
 func TestEmbedded(t *testing.T) {
-
+	t.Parallel()
 	tc := newTestCounter()
 	adds := make(chan string, 4)
 
@@ -25,7 +25,7 @@ func TestEmbedded(t *testing.T) {
 	go runner.Run()
 
 	for _, taskid := range []string{"one", "two", "three", "four"} {
-		err := client.SubmitTask(taskid)
+		err := client.SubmitTask(taskid, nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}
@@ -51,6 +51,7 @@ func TestEmbedded(t *testing.T) {
 }
 
 func TestEmbeddedShutdown(t *testing.T) {
+	t.Parallel()
 	const n = 4
 	runs := make(chan int, n)
 	stops := make(chan int, n)
@@ -75,7 +76,7 @@ func TestEmbeddedShutdown(t *testing.T) {
 
 	// submit tasks
 	for _, taskid := range tasks {
-		err := client.SubmitTask(taskid)
+		err := client.SubmitTask(taskid, nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}

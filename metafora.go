@@ -20,7 +20,7 @@ type Consumer struct {
 	handler HandlerFunc
 
 	// Map of task:Handler
-	running map[string]*task
+	running map[string]*runningtask
 
 	// Mutex to protect access to running
 	runL sync.Mutex
@@ -37,7 +37,7 @@ type Consumer struct {
 	coord    Coordinator
 	im       *ignoremgr
 	stop     chan struct{} // closed by Shutdown to cause Run to exit
-	tasks    chan string   // channel for watcher to send tasks to main loop
+	tasks    chan Task     // channel for watcher to send tasks to main loop
 
 	// Set by command handler, read anywhere via Consumer.frozen()
 	freezeL sync.Mutex
@@ -47,13 +47,13 @@ type Consumer struct {
 // NewConsumer returns a new consumer and calls Init on the Balancer and Coordinator.
 func NewConsumer(coord Coordinator, h HandlerFunc, b Balancer) (*Consumer, error) {
 	c := &Consumer{
-		running:  make(map[string]*task),
+		running:  make(map[string]*runningtask),
 		handler:  h,
 		bal:      b,
 		balEvery: 15 * time.Minute, //TODO make balance wait configurable
 		coord:    coord,
 		stop:     make(chan struct{}),
-		tasks:    make(chan string),
+		tasks:    make(chan Task),
 	}
 	c.im = ignorer(c.tasks, c.stop)
 
@@ -158,17 +158,18 @@ func (c *Consumer) Run() {
 		case <-balance:
 			c.balance()
 		case task := <-c.tasks:
-			if c.ignored(task) {
+			tid := task.ID()
+			if c.ignored(tid) {
 				Debugf("task=%q ignored", task)
 				continue
 			}
 			if until, ok := c.bal.CanClaim(task); !ok {
-				Infof("Balancer rejected task=%q until %s", task, until)
+				Infof("Balancer rejected task=%q until %s", tid, until)
 				c.ignore(task, until)
 				break
 			}
-			if !c.coord.Claim(task) {
-				Debugf("Coordinator unable to claim task=%q", task)
+			if !c.coord.Claim(tid) {
+				Debugf("Coordinator unable to claim task=%q", tid)
 				break
 			}
 			c.claimed(task)
@@ -254,7 +255,7 @@ func (c *Consumer) Shutdown() {
 }
 
 // Tasks returns a lexicographically sorted list of running Task IDs.
-func (c *Consumer) Tasks() []Task {
+func (c *Consumer) Tasks() []RunningTask {
 	c.runL.Lock()
 	defer c.runL.Unlock()
 
@@ -268,7 +269,7 @@ func (c *Consumer) Tasks() []Task {
 	sort.Strings(ids)
 
 	// Add tasks in lexicographic order
-	t := make([]Task, len(ids))
+	t := make([]RunningTask, len(ids))
 	for i, id := range ids {
 		t[i] = c.running[id]
 	}
@@ -278,10 +279,11 @@ func (c *Consumer) Tasks() []Task {
 // claimed starts a handler for a claimed task. It is the only method to
 // manipulate c.running and closes the task channel when a handler's Run
 // method exits.
-func (c *Consumer) claimed(taskID string) {
+func (c *Consumer) claimed(task Task) {
+	tid := task.ID()
 	h := c.handler()
 
-	Debugf("Attempting to start task " + taskID)
+	Debug("Attempting to start task ", tid)
 	// Associate handler with taskID
 	// **This is the only place tasks should be added to c.running**
 	c.runL.Lock()
@@ -292,14 +294,14 @@ func (c *Consumer) claimed(taskID string) {
 		return
 	default:
 	}
-	if _, ok := c.running[taskID]; ok {
+	if _, ok := c.running[tid]; ok {
 		// If a coordinator returns an already claimed task from Watch(), then it's
 		// a coordinator (or broker) bug.
-		Warnf("Attempted to claim already running task %s", taskID)
+		Warnf("Attempted to claim already running task %s", tid)
 		return
 	}
-	rt := newTask(taskID, h)
-	c.running[taskID] = rt
+	rt := newTask(task, h)
+	c.running[tid] = rt
 
 	// This must be done in the runL lock after the stop chan check so Shutdown
 	// doesn't close(stop) and start Wait()ing concurrently.
@@ -311,24 +313,24 @@ func (c *Consumer) claimed(taskID string) {
 		defer c.hwg.Done() // Must be run after task exit and Done/Release called
 
 		// Run the task
-		Infof("Task %q started", taskID)
-		done := c.runTask(h.Run, taskID)
+		Infof("task=%q started", tid)
+		done := c.runTask(h.Run, tid)
 		var status string
 		if done {
 			status = "done"
-			c.coord.Done(taskID)
+			c.coord.Done(tid)
 		} else {
 			status = "released"
-			c.coord.Release(taskID)
+			c.coord.Release(tid)
 		}
 
 		stopped := rt.Stopped()
 		if stopped.IsZero() {
 			// Task exited on its own
-			Infof("Task %q exited (%s)", taskID, status)
+			Infof("task=%q exited (%s)", tid, status)
 		} else {
 			// Task exited due to Stop() being called
-			Infof("Task %q exited (%s) after %s", taskID, status, time.Now().Sub(stopped))
+			Infof("task=%q exited (%s) after %s", tid, status, time.Now().Sub(stopped))
 		}
 	}()
 }
@@ -437,8 +439,8 @@ func (c *Consumer) handleCommand(cmd Command) {
 	}
 }
 
-func (c *Consumer) ignored(taskID string) bool            { return c.im.ignored(taskID) }
-func (c *Consumer) ignore(taskID string, until time.Time) { c.im.add(taskID, until) }
+func (c *Consumer) ignored(taskID string) bool        { return c.im.ignored(taskID) }
+func (c *Consumer) ignore(task Task, until time.Time) { c.im.add(task, until) }
 
 // Ignores is a list of all ignored tasks.
 func (c *Consumer) Ignores() []string { return c.im.all() }

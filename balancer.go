@@ -22,7 +22,7 @@ type BalancerContext interface {
 	// Tasks returns a sorted list of task IDs run by this Consumer. The Consumer
 	// stops task manipulations during claiming and balancing, so the list will
 	// be accurate unless a task naturally completes.
-	Tasks() []Task
+	Tasks() []RunningTask
 }
 
 // Balancer is the core task balancing interface. Without a master Metafora
@@ -38,7 +38,7 @@ type Balancer interface {
 	//
 	// When denying a claim by returning false, CanClaim should return the time
 	// at which to reconsider the task for claiming.
-	CanClaim(taskID string) (ignoreUntil time.Time, claim bool)
+	CanClaim(task Task) (ignoreUntil time.Time, claim bool)
 
 	// Balance should return the list of Task IDs that should be released. The
 	// criteria used to determine which tasks should be released is left up to
@@ -56,7 +56,7 @@ type dumbBalancer struct{}
 func (dumbBalancer) Init(BalancerContext) {}
 
 // CanClaim always returns true.
-func (dumbBalancer) CanClaim(string) (time.Time, bool) { return NoDelay, true }
+func (dumbBalancer) CanClaim(Task) (time.Time, bool) { return NoDelay, true }
 
 // Balance never returns any tasks to balance.
 func (dumbBalancer) Balance() []string { return nil }
@@ -107,7 +107,7 @@ func (e *FairBalancer) Init(s BalancerContext) {
 // CanClaim will claim any task if this node wasn't over the task threshold
 // during the last rebalance. If it was over the threshold claims will be
 // delayed proportionally.
-func (e *FairBalancer) CanClaim(taskid string) (time.Time, bool) {
+func (e *FairBalancer) CanClaim(Task) (time.Time, bool) {
 	if e.delay == 0 {
 		return NoDelay, true
 	}
@@ -125,17 +125,21 @@ func (e *FairBalancer) Balance() []string {
 		return nil
 	}
 
-	releasetasks := []string{}
 	shouldrelease := current[e.nodeid] - e.desiredCount(current)
 	if shouldrelease < 1 {
 		return nil
 	}
+	releasetasks := make([]string, 0, shouldrelease)
+	releaseset := make(map[string]struct{}, shouldrelease)
 
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	nodetasks := e.bc.Tasks()
 	for len(releasetasks) < shouldrelease {
 		tid := nodetasks[random.Intn(len(nodetasks))].ID()
-		releasetasks = append(releasetasks, tid)
+		if _, ok := releaseset[tid]; !ok {
+			releasetasks = append(releasetasks, tid)
+			releaseset[tid] = struct{}{}
+		}
 	}
 
 	e.delay = time.Duration(len(releasetasks)) * time.Second

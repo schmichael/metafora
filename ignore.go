@@ -14,20 +14,20 @@ type ignoremgr struct {
 	ignores  map[string]struct{}
 }
 
-func ignorer(tasks chan<- string, stop <-chan struct{}) *ignoremgr {
+func ignorer(tasks chan<- Task, stop <-chan struct{}) *ignoremgr {
 	im := &ignoremgr{mu: &sync.RWMutex{}, ignores: make(map[string]struct{}), incoming: make(chan *timetask)}
 	go im.monitor(tasks, stop)
 	return im
 }
 
-func (im *ignoremgr) add(taskID string, until time.Time) {
+func (im *ignoremgr) add(task Task, until time.Time) {
 	// short circuit ignores that have already elapsed
 	if until.Before(time.Now()) {
 		return
 	}
 	im.mu.Lock()
-	im.ignores[taskID] = struct{}{}
-	im.incoming <- &timetask{time: until, task: taskID}
+	im.ignores[task.ID()] = struct{}{}
+	im.incoming <- &timetask{time: until, task: task}
 	im.mu.Unlock()
 }
 
@@ -39,7 +39,7 @@ func (im *ignoremgr) ignored(taskID string) (ignored bool) {
 	return ok
 }
 
-func (im *ignoremgr) monitor(tasks chan<- string, stop <-chan struct{}) {
+func (im *ignoremgr) monitor(tasks chan<- Task, stop <-chan struct{}) {
 	times := timeheap{}
 	heap.Init(&times)
 	var next *timetask
@@ -67,7 +67,7 @@ func (im *ignoremgr) monitor(tasks chan<- string, stop <-chan struct{}) {
 		case <-timer.C:
 			// Ignore expired, remove the entry
 			im.mu.Lock()
-			delete(im.ignores, next.task)
+			delete(im.ignores, next.task.ID())
 			im.mu.Unlock()
 
 			// Notify the consumer
@@ -83,10 +83,11 @@ func (im *ignoremgr) monitor(tasks chan<- string, stop <-chan struct{}) {
 }
 
 func (im *ignoremgr) all() []string {
-	im.mu.RLock()
-	defer im.mu.RUnlock()
 	ignores := make([]string, len(im.ignores))
 	i := 0
+
+	im.mu.RLock()
+	defer im.mu.RUnlock()
 	for k := range im.ignores {
 		ignores[i] = k
 		i++
@@ -96,7 +97,7 @@ func (im *ignoremgr) all() []string {
 
 type timetask struct {
 	time time.Time
-	task string
+	task Task
 }
 
 // timeheap is a min-heap of time/task tuples sorted by time.
