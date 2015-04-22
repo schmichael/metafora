@@ -6,6 +6,7 @@ import (
 )
 
 var (
+	_ Balancer        = (*SleepBalancer)(nil)
 	_ BalancerContext = (*TestConsumerState)(nil)
 	_ ClusterState    = (*TestClusterState)(nil)
 )
@@ -24,7 +25,7 @@ func TestFairBalancerOneNode(t *testing.T) {
 	fb := NewDefaultFairBalancer("node1", clusterstate)
 	fb.Init(consumerstate)
 
-	if _, ok := fb.CanClaim("23"); !ok {
+	if _, ok := fb.CanClaim(&TestTask{id: "23"}); !ok {
 		t.Fatal("Expected claim to be true")
 	}
 
@@ -50,7 +51,7 @@ func TestFairBalanceOver(t *testing.T) {
 	fb := NewDefaultFairBalancer("node1", clusterstate)
 	fb.Init(consumerstate)
 
-	if _, ok := fb.CanClaim("23"); !ok {
+	if _, ok := fb.CanClaim(&TestTask{id: "23"}); !ok {
 		t.Fatal("Expected claim to be true")
 	}
 
@@ -77,7 +78,7 @@ func TestFairBalanceNothing(t *testing.T) {
 	fb := NewDefaultFairBalancer("node1", clusterstate)
 	fb.Init(consumerstate)
 
-	if _, ok := fb.CanClaim("23"); !ok {
+	if _, ok := fb.CanClaim(&TestTask{id: "23"}); !ok {
 		t.Fatal("Expected claim to be true")
 	}
 
@@ -106,10 +107,10 @@ type TestConsumerState struct {
 	Current []string
 }
 
-func (tc *TestConsumerState) Tasks() []Task {
-	tasks := []Task{}
+func (tc *TestConsumerState) Tasks() []RunningTask {
+	tasks := []RunningTask{}
 	for _, id := range tc.Current {
-		tasks = append(tasks, newTask(id, nil))
+		tasks = append(tasks, newTask(&TestTask{id: id}, nil))
 	}
 	return tasks
 }
@@ -121,10 +122,10 @@ type sbCtx struct {
 	tasks []string
 }
 
-func (ctx *sbCtx) Tasks() []Task {
-	tasks := []Task{}
+func (ctx *sbCtx) Tasks() []RunningTask {
+	tasks := []RunningTask{}
 	for _, id := range ctx.tasks {
-		tasks = append(tasks, newTask(id, nil))
+		tasks = append(tasks, newTask(&TestTask{id: id}, nil))
 	}
 	return tasks
 }
@@ -139,13 +140,13 @@ func TestSleepBalancer(t *testing.T) {
 	b := &SleepBalancer{}
 	b.Init(c)
 
-	task := "test-task"
+	task := &TestTask{id: "test-task"}
 	pre := time.Now()
 	total := 0
 	for i := 0; i < 10; i++ {
 		total += i
 		b.CanClaim(task)
-		c.tasks = append(c.tasks, task)
+		c.tasks = append(c.tasks, task.ID())
 	}
 	post := time.Now()
 	minimum := pre.Add(time.Duration(total) * sleepBalLen)

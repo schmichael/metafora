@@ -17,14 +17,17 @@ that implementing Metafora with etcd in your own work system is quick and easy.
     │           └── <command>  JSON value
     └── tasks
         └── <task_id>
-            └── owner          Ephemeral
-                               JSON value
+            ├── props          JSON value
+            └── owner          Ephemeral, JSON value
 ```
 
 ##### Tasks
 
-Metafora clients submit tasks by making an empty directory in
-`/<namespace>/tasks/` without a TTL.
+Metafora clients submit tasks by making either: 
+
+* an empty directory in `/<namespace>/tasks/`
+* a new directory containing a single file `/<namespace>/tasks/props`
+  * `props` may have a JSON encoded value of string keys and values
 
 Metafora nodes claim tasks by watching the `tasks` directory and -- if
 `Balancer.CanClaim` returns `true` -- tries to create the

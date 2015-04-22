@@ -2,22 +2,33 @@ package embedded
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/lytics/metafora"
 )
 
-func NewEmbeddedCoordinator(nodeid string, taskchan chan string, cmdchan chan *NodeCommand, nodechan chan []string) metafora.Coordinator {
-	e := &EmbeddedCoordinator{inchan: taskchan, cmdchan: cmdchan, stopchan: make(chan struct{}), nodechan: nodechan}
-	// HACK - need to respond to node requests, assuming a single coordinator/client pair
-	go func() {
-		for {
-			select {
-			case e.nodechan <- []string{e.nodeid}:
-			case <-e.stopchan:
-				return
-			}
-		}
-	}()
+type task struct {
+	id    string
+	props map[string]string
+}
+
+func (t *task) ID() string               { return t.id }
+func (t *task) Props() map[string]string { return t.props }
+
+// NewTask returns a metafora.Task implementation based on the given ID and
+// properties. It's meant to be used by the embedded coordinator and tests.
+func NewTask(id string, props map[string]string) metafora.Task {
+	return &task{id: id, props: props}
+}
+
+func NewEmbeddedCoordinator(nodeid string, inchan chan metafora.Task, cmdchan chan *NodeCommand) metafora.Coordinator {
+	e := &EmbeddedCoordinator{
+		inchan:   inchan,
+		cmdchan:  cmdchan,
+		stopchan: make(chan struct{}),
+		tasksL:   &sync.Mutex{},
+		tasks:    make(map[string]metafora.Task),
+	}
 
 	return e
 }
@@ -26,10 +37,12 @@ func NewEmbeddedCoordinator(nodeid string, taskchan chan string, cmdchan chan *N
 type EmbeddedCoordinator struct {
 	nodeid   string
 	ctx      metafora.CoordinatorContext
-	inchan   chan string
+	inchan   chan metafora.Task
 	cmdchan  chan *NodeCommand
-	nodechan chan<- []string
 	stopchan chan struct{}
+
+	tasksL *sync.Mutex
+	tasks  map[string]metafora.Task
 }
 
 func (e *EmbeddedCoordinator) Init(c metafora.CoordinatorContext) error {
@@ -37,16 +50,19 @@ func (e *EmbeddedCoordinator) Init(c metafora.CoordinatorContext) error {
 	return nil
 }
 
-func (e *EmbeddedCoordinator) Watch(out chan<- string) error {
+func (e *EmbeddedCoordinator) Watch(out chan<- metafora.Task) error {
 	for {
 		// wait for incoming tasks
 		select {
-		case id, ok := <-e.inchan:
+		case task, ok := <-e.inchan:
 			if !ok {
 				return errors.New("Input closed")
 			}
+			e.tasksL.Lock()
+			e.tasks[task.ID()] = task
+			e.tasksL.Unlock()
 			select {
-			case out <- id:
+			case out <- task:
 			case <-e.stopchan:
 				return nil
 			}
@@ -64,15 +80,25 @@ func (e *EmbeddedCoordinator) Claim(taskID string) bool {
 func (e *EmbeddedCoordinator) Release(taskID string) {
 	// Releasing should be async to avoid deadlocks (and better reflect the
 	// behavior of "real" coordinators)
+	e.tasksL.Lock()
+	defer e.tasksL.Unlock()
+	task, ok := e.tasks[taskID]
+	if !ok {
+		panic("cannot release a task that has never been seen! " + taskID)
+	}
 	go func() {
 		select {
-		case e.inchan <- taskID:
+		case e.inchan <- task:
 		case <-e.stopchan:
 		}
 	}()
 }
 
-func (e *EmbeddedCoordinator) Done(taskID string) {}
+func (e *EmbeddedCoordinator) Done(taskID string) {
+	e.tasksL.Lock()
+	defer e.tasksL.Unlock()
+	delete(e.tasks, taskID)
+}
 
 func (e *EmbeddedCoordinator) Command() (metafora.Command, error) {
 	select {

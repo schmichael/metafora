@@ -3,7 +3,6 @@ package m_etcd
 import (
 	"encoding/json"
 	"path"
-	"strings"
 
 	"github.com/coreos/go-etcd/etcd"
 	"github.com/lytics/metafora"
@@ -12,7 +11,9 @@ import (
 // NewFairBalancer creates a new metafora.DefaultFairBalancer that uses etcd
 // for counting tasks per node.
 func NewFairBalancer(nodeid, namespace string, client *etcd.Client) metafora.Balancer {
-	namespace = "/" + strings.Trim(namespace, "/ ")
+	if namespace[0] != '/' {
+		namespace = "/" + namespace
+	}
 	e := etcdClusterState{
 		client:   client,
 		taskPath: path.Join(namespace, "tasks"),
@@ -62,7 +63,7 @@ func (e *etcdClusterState) NodeTaskCount() (map[string]int, error) {
 	// We ignore tasks which have no claims
 	for _, task := range resp.Node.Nodes {
 		for _, claim := range task.Nodes {
-			if path.Base(claim.Key) == OwnerMarker {
+			if path.Base(claim.Key) == claimMarker {
 				val := ownerValue{}
 				if err := json.Unmarshal([]byte(claim.Value), &val); err == nil {
 					// We want to only include those nodes which were initially included,

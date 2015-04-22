@@ -62,24 +62,20 @@ func (b *ResourceBalancer) Init(ctx BalancerContext) {
 	b.ctx = ctx
 }
 
-func (b *ResourceBalancer) CanClaim(string) bool {
+func (b *ResourceBalancer) CanClaim(Task) (time.Time, bool) {
 	used, total := b.reporter.Used()
 	threshold := int(float32(used) / float32(total) * 100)
 	if threshold >= b.claimLimit {
-		//FIXME Until #93 is fixed returning false is very dangerous as it could
-		//      cause a tight loop with the coordinator. Sleep longer than more
-		//      lightly loaded nodes.
-		dur := time.Duration(100+(threshold-b.claimLimit)) * time.Millisecond
-		Infof("%d is over the claim limit of %d. Used %d of %d %s. Sleeping %s before claiming.",
-			threshold, b.claimLimit, used, total, b.reporter, dur)
-		time.Sleep(dur)
-		return true
+		until := time.Now().Add(time.Duration(100+(threshold-b.claimLimit)) * time.Millisecond)
+		Infof("%d is over the claim limit of %d. Used %d of %d %s. Ignoring until %s.",
+			threshold, b.claimLimit, used, total, b.reporter, until)
+		return until, false
 	}
 
 	// Always sleep based on resource usage to give less loaded nodes an advantage
 	dur := time.Duration(threshold) * time.Millisecond
 	time.Sleep(dur)
-	return true
+	return time.Time{}, true
 }
 
 func (b *ResourceBalancer) Balance() []string {
@@ -91,7 +87,7 @@ func (b *ResourceBalancer) Balance() []string {
 	}
 
 	// Release the oldest task that isn't already stopping
-	var task Task
+	var task RunningTask
 	for _, t := range b.ctx.Tasks() {
 		if t.Stopped().IsZero() && (task == nil || task.Started().After(t.Started())) {
 			task = t

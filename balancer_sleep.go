@@ -32,8 +32,8 @@ func (b *SleepBalancer) Init(ctx BalancerContext) { b.ctx = ctx }
 func (*SleepBalancer) Balance() []string { return nil }
 
 // CanClaim sleeps 30ms per claimed task.
-func (b *SleepBalancer) CanClaim(string) bool {
+func (b *SleepBalancer) CanClaim(Task) (time.Time, bool) {
 	num := len(b.ctx.Tasks())
 	time.Sleep(time.Duration(num) * sleepBalLen)
-	return true
+	return NoDelay, true
 }

@@ -67,7 +67,7 @@ func (m *taskManager) taskPath(taskID string) string {
 }
 
 func (m *taskManager) ownerKey(taskID string) string {
-	return path.Join(m.taskPath(taskID), OwnerMarker)
+	return path.Join(m.taskPath(taskID), claimMarker)
 }
 
 func (m *taskManager) ownerNode(taskID string) (key, value string) {

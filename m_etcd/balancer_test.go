@@ -13,7 +13,9 @@ func TestFairBalancer(t *testing.T) {
 
 	cli := NewClient(namespace, etcdc)
 
+	running := make(chan int, 100)
 	h := metafora.SimpleHandler(func(task string, stop <-chan bool) bool {
+		running <- 1
 		metafora.Debugf("Starting %s", task)
 		<-stop
 		metafora.Debugf("Stopping %s", task)
@@ -36,14 +38,16 @@ func TestFairBalancer(t *testing.T) {
 	// Start the first and let it claim a bunch of tasks
 	go con1.Run()
 	defer con1.Shutdown()
-	cli.SubmitTask("t1")
-	cli.SubmitTask("t2")
-	cli.SubmitTask("t3")
-	cli.SubmitTask("t4")
-	cli.SubmitTask("t5")
-	cli.SubmitTask("t6")
+	cli.SubmitTask("t1", nil)
+	cli.SubmitTask("t2", nil)
+	cli.SubmitTask("t3", nil)
+	cli.SubmitTask("t4", nil)
+	cli.SubmitTask("t5", nil)
+	cli.SubmitTask("t6", nil)
 
-	time.Sleep(500 * time.Millisecond)
+	for i := 0; i < 6; i++ {
+		<-running
+	}
 
 	if len(con1.Tasks()) != 6 {
 		t.Fatalf("con1 should have claimed 6 tasks: %d", len(con1.Tasks()))
@@ -58,7 +62,12 @@ func TestFairBalancer(t *testing.T) {
 
 	cli.SubmitCommand(nodeID, metafora.CommandBalance())
 
-	time.Sleep(2 * time.Second)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-running:
+		case <-time.After(10 * time.Second):
+		}
+	}
 
 	c1Tasks := con1.Tasks()
 	c2Tasks := con2.Tasks()
@@ -91,14 +100,16 @@ func TestFairBalancer(t *testing.T) {
 // Fair balancer shouldn't consider a shutting-down node
 // See https://github.com/lytics/metafora/issues/92
 func TestFairBalancerShutdown(t *testing.T) {
-	metafora.SetLogLevel(metafora.LogLevelDebug)
 	coord1, etcdc := setupEtcd(t)
 	coord2 := NewEtcdCoordinator("node2", namespace, etcdc).(*EtcdCoordinator)
 
 	cli := NewClient(namespace, etcdc)
 
+	running := make(chan int, 100)
+
 	// This handler always returns immediately
 	h1 := metafora.SimpleHandler(func(task string, stop <-chan bool) bool {
+		running <- 1
 		metafora.Debugf("H1 Starting %s", task)
 		<-stop
 		metafora.Debugf("H1 Stopping %s", task)
@@ -110,6 +121,7 @@ func TestFairBalancerShutdown(t *testing.T) {
 	stopr := make(chan chan struct{}, 1)
 	stopr <- stop2
 	h2 := metafora.SimpleHandler(func(task string, stop <-chan bool) bool {
+		running <- 1
 		metafora.Debugf("H2 Starting %s", task)
 		blockchan, ok := <-stopr
 		if ok {
@@ -136,14 +148,16 @@ func TestFairBalancerShutdown(t *testing.T) {
 	// Start the first and let it claim a bunch of tasks
 	go con1.Run()
 	defer con1.Shutdown()
-	cli.SubmitTask("t1")
-	cli.SubmitTask("t2")
-	cli.SubmitTask("t3")
-	cli.SubmitTask("t4")
-	cli.SubmitTask("t5")
-	cli.SubmitTask("t6")
+	cli.SubmitTask("t1", nil)
+	cli.SubmitTask("t2", nil)
+	cli.SubmitTask("t3", nil)
+	cli.SubmitTask("t4", nil)
+	cli.SubmitTask("t5", nil)
+	cli.SubmitTask("t6", nil)
 
-	time.Sleep(500 * time.Millisecond)
+	for i := 0; i < 6; i++ {
+		<-running
+	}
 
 	if len(con1.Tasks()) != 6 {
 		t.Fatalf("con1 should have claimed 6 tasks: %d", len(con1.Tasks()))
@@ -159,7 +173,13 @@ func TestFairBalancerShutdown(t *testing.T) {
 
 	cli.SubmitCommand(nodeID, metafora.CommandBalance())
 
-	time.Sleep(2 * time.Second)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-running:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Should have started a task within 2s")
+		}
+	}
 
 	c1Tasks := con1.Tasks()
 	c2Tasks := con2.Tasks()
@@ -170,7 +190,7 @@ func TestFairBalancerShutdown(t *testing.T) {
 	// Make sure that balancing the other node does nothing
 	cli.SubmitCommand("node2", metafora.CommandBalance())
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(1500 * time.Millisecond)
 
 	c1Tasks2 := con1.Tasks()
 	c2Tasks2 := con2.Tasks()
@@ -201,7 +221,11 @@ func TestFairBalancerShutdown(t *testing.T) {
 
 	cli.SubmitCommand(nodeID, metafora.CommandBalance())
 
-	time.Sleep(2 * time.Second)
+	select {
+	case <-running:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Should have started a task within 2s")
+	}
 
 	c1Tasks3 := con1.Tasks()
 	c2Tasks3 := con2.Tasks()
@@ -218,7 +242,7 @@ func TestFairBalancerShutdown(t *testing.T) {
 
 	cli.SubmitCommand(nodeID, metafora.CommandBalance())
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(1500 * time.Millisecond)
 
 	// con2 is out of the picture. con1 has all the tasks.
 	c1Tasks4 := con1.Tasks()
@@ -226,5 +250,4 @@ func TestFairBalancerShutdown(t *testing.T) {
 	if len(c1Tasks4) != 6 || len(c2Tasks4) != 0 {
 		t.Fatalf("Expected consumers to have 6|0 tasks: %d|%d", len(c1Tasks4), len(c2Tasks4))
 	}
-
 }
